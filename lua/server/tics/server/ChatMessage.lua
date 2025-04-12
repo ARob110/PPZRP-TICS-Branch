@@ -759,6 +759,25 @@ local function GetEmittingRadios(player, packetType, messageType, range)
                 radioEmission = true
             end
         end
+        local vehicles = World.getVehiclesInRange(player, range)
+        for _, vehicle in pairs(vehicles) do
+            local part = vehicle:getPartById("Radio")
+            if part then
+                local radioData = part:getDeviceData()
+                if radioData then
+                    local frequency = radioData:getChannel()
+                    if radioData:getIsTwoWay() and radioData:getIsTurnedOn()
+                            and not radioData:getMicIsMuted() and frequency ~= nil
+                    then
+                        if radioFrequencies[frequency] == nil then
+                            radioFrequencies[frequency] = {}
+                        end
+                        table.insert(radioFrequencies[frequency], part)
+                        radioEmission = true
+                    end
+                end
+            end
+        end
     end
     return radioEmission, radioFrequencies
 end
@@ -894,9 +913,8 @@ function ChatMessage.ProcessMessage(player, args, packetType, sendError)
         for frequency, _ in pairs(radioFrequencies) do
             table.insert(radiosFrequenciesList, frequency)
         end
-        if Logger and Logger.LogChat then
-            Logger.LogChat(args.type, args.author, args.characterName, args.message, radiosFrequenciesList, args.target)
-        end
+        Logger.LogChat(args.type, args.author, args.characterName, args.message, radiosFrequenciesList, args.target)
+
         if args.type ~= "admin" then
             print(string.format("[TICS Chat] (%s) %s: %s", -- Keep this console log
                     args.type,

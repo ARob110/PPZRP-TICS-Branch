@@ -82,6 +82,42 @@ RecvServer['MuteSquareRadio'] = function(player, args)
     Radio.SyncSquare(radio)
 end
 
+RecvServer["MuteVehicleRadio"] = function(player, args)
+    local vehicleId = args.vehicleId
+    if not vehicleId then
+        print("TICS error: MuteVehicleRadio with no vehicleId")
+        return
+    end
+
+    local vehicle = getVehicleById(vehicleId)
+    if not vehicle then
+        print("TICS error: No vehicle found with ID", vehicleId)
+        return
+    end
+
+    local part = vehicle:getPartById("Radio")
+    if not part then
+        print("TICS error: This vehicle has no 'Radio' part")
+        return
+    end
+
+    local radioData = part:getDeviceData()
+    if not radioData then
+        print("TICS error: Vehicle Radio has no DeviceData")
+        return
+    end
+
+    local mute = args.mute
+    if type(mute) ~= "boolean" then
+        print("TICS error: MuteVehicleRadio missing a boolean 'mute' field")
+        return
+    end
+
+    radioData:setMicIsMuted(mute)
+
+    -- Optionally sync back to the client with a new function:
+    Radio.SyncVehicle(part, player)
+end
 
 RecvServer['ChatMessage'] = function(player, args)
     -- Explicitly extract colors if ProcessMessage needs them separately
@@ -566,5 +602,31 @@ local function OnClientCommand(module, command, player, args)
     end
 end
 
+RecvServer["GiveVehicleRadioState"] = function(player, args)
+    local vehicleId = args.vehicleId
+    local vehicle = vehicleId and getVehicleById(vehicleId)
+    if not vehicle then
+        print("TICS ERROR: No vehicle for vehicleId", tostring(vehicleId))
+        return
+    end
+
+    local part = vehicle:getPartById("Radio")
+    if not part or not part:getDeviceData() then
+        print("TICS ERROR: Vehicle has no 'Radio' part or no device data")
+        return
+    end
+
+    local radioData = part:getDeviceData()
+    radioData:setIsTurnedOn(args.turnedOn)
+    radioData:setMicIsMuted(args.mute)
+    radioData:setDeviceVolume(args.volume)
+    radioData:setChannel(args.frequency)
+
+    -- Optionally set isTwoWay if desired
+    -- radioData:setIsTwoWay(true)
+    -- radioData:setTransmitRange(3000)
+
+    Radio.SyncVehicle(part, player)
+end
 
 Events.OnClientCommand.Add(OnClientCommand)

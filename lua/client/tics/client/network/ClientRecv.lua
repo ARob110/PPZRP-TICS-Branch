@@ -66,6 +66,18 @@ ClientRecv['RadioInHandState'] = function(args)
             args.frequency)
 end
 
+ClientRecv["RadioVehicleState"] = function(args)
+    Radio.SyncVehicle(
+            args.turnedOn,
+            args.mute,
+            args.power,
+            args.volume,
+            args.frequency,
+            args.vehicleId
+    -- optionally x,y,z if you need them
+    )
+end
+
 ClientRecv['ApprovedAvatar'] = function(args)
     local username  = args['username']
     local firstName = args['firstName']

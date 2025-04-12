@@ -100,6 +100,37 @@ function Radio.SyncInHand(id, turnedOn, mute, power, volume, frequency)
     radioData:setMicIsMuted(mute)
 end
 
+function Radio.SyncVehicle(turnedOn, mute, power, volume, frequency, vehicleId)
+    if not vehicleId then
+        print("TICS error: Radio.SyncVehicle: no vehicleId")
+        return
+    end
+
+    local vehicle = getVehicleById(vehicleId)
+    if not vehicle then
+        print("TICS error: Radio.SyncVehicle: no such vehicle")
+        return
+    end
+
+    local part = vehicle:getPartById("Radio")
+    if not part then
+        print("TICS error: Radio.SyncVehicle: vehicle has no 'Radio' part")
+        return
+    end
+
+    local radioData = part:getDeviceData()
+    if not radioData then
+        print("TICS error: Radio.SyncVehicle: missing device data")
+        return
+    end
+
+    radioData:setIsTurnedOn(turnedOn)
+    radioData:setMicIsMuted(mute)
+    radioData:setPower(power)
+    radioData:setDeviceVolume(volume)
+    radioData:setChannel(frequency)
+end
+
 local function Update()
     local player = getPlayer()
     local inventoryRadios = player:getAttachedItems()

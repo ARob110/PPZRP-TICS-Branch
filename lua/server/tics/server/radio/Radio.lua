@@ -122,4 +122,32 @@ function Radio.SyncHand(radio, player, id)
         player, id, turnedOn, mute, power, volume, frequency, x, y, z)
 end
 
+function Radio.SyncVehicle(radioPart, player)
+    if not radioPart or not radioPart:getDeviceData() then
+        print("TICS error: Radio.SyncVehicle missing device data")
+        return
+    end
+
+    local radioData = radioPart:getDeviceData()
+    local turnedOn  = radioData:getIsTurnedOn()
+    local mute      = radioData:getMicIsMuted()
+    local power     = radioData:getPower()
+    local volume    = radioData:getDeviceVolume()
+    local frequency = radioData:getChannel()
+    local vehicle   = radioPart:getVehicle()
+    local x,y,z     = vehicle:getX(), vehicle:getY(), vehicle:getZ()
+
+    ServerSend.Command(player, "RadioVehicleState", {
+        turnedOn  = turnedOn,
+        mute      = mute,
+        power     = power,
+        volume    = volume,
+        frequency = frequency,
+        vehicleId = vehicle:getId(),
+        x = x, y = y, z = z
+    })
+end
+
+
+
 return Radio

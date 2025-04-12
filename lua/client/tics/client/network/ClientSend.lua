@@ -148,6 +148,20 @@ end
 
 function ClientSend.sendMuteRadio(radio, state)
     if not isClient() then return end
+    -- If "radioOrPart" is actually a VehiclePart (the 'Radio' part from the car)
+    if instanceof(radioOrPart, "VehiclePart") then
+        local vehicle = radioOrPart:getVehicle()
+        if not vehicle then
+            print("TICS error: sendMuteRadio given a part with no vehicle!")
+            return
+        end
+        ClientSendCommand("MuteVehicleRadio", {
+            vehicleId = vehicle:getId(),
+            mute = state
+        })
+        return
+    end
+
     local radioData = radio:getDeviceData()
     if radioData == nil then
         print('TICS error: ClientSend.sendMuteRadio: no radioData found')
@@ -184,6 +198,27 @@ function ClientSend.sendMuteRadio(radio, state)
             player = getPlayer():getUsername(),
         })
     end
+end
+
+function ClientSend.sendVehicleRadioState(part)
+    if not instanceof(part, "VehiclePart") then
+        print("TICS ERROR: sendVehicleRadioState called on non-VehiclePart:", tostring(part))
+        return
+    end
+
+    local radioData = part:getDeviceData()
+    if not radioData then
+        print("TICS ERROR: VehiclePart has no device data.")
+        return
+    end
+
+    ClientSendCommand("GiveVehicleRadioState", {
+        vehicleId  = part:getVehicle():getId(),
+        turnedOn   = radioData:getIsTurnedOn(),
+        mute       = radioData:getMicIsMuted(),
+        volume     = radioData:getDeviceVolume(),
+        frequency  = radioData:getChannel()
+    })
 end
 
 function ClientSend.sendChangeName(fullName) -- Sending ChangeName to server
