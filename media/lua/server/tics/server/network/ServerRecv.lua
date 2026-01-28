@@ -82,6 +82,50 @@ RecvServer['MuteSquareRadio'] = function(player, args)
     Radio.SyncSquare(radio)
 end
 
+RecvServer['MuteVehicleRadio'] = function(player, args)
+    local vehicleId = args['vehicle']
+    if not vehicleId then return end
+    
+    local vehicle = getVehicleById(vehicleId)
+    if not vehicle then return end
+    
+    local part = vehicle:getPartById("Radio")
+    if part then
+        local radioData = part:getDeviceData()
+        if radioData then
+            radioData:setMicIsMuted(args['mute'])
+        end
+    end
+end
+
+RecvServer['AskBio'] = function(player, args)
+    local targetUsername = args.target
+    if not targetUsername then return end
+    
+    local targetPlayer = nil
+    
+    -- FIX: Manually loop to find the player. 
+    -- The previous version crashed because 'getPlayerByUsername' does not exist on the server.
+    local onlinePlayers = getOnlinePlayers()
+    for i = 0, onlinePlayers:size() - 1 do
+        local p = onlinePlayers:get(i)
+        if p:getUsername() == targetUsername then
+            targetPlayer = p
+            break
+        end
+    end
+    
+    local bio = nil
+    if targetPlayer then
+        bio = BioServer.Get(targetPlayer)
+    end
+    
+    local response = {
+        username = targetUsername,
+        bio = bio
+    }
+    ServerSend.Command(player, "SyncBio", response)
+end
 
 RecvServer['ChatMessage'] = function(player, args)
     -- Explicitly extract colors if ProcessMessage needs them separately
@@ -595,6 +639,42 @@ RecvServer["SetChatColor"] = function(player, args)
     player:transmitModData()
 
     ServerSend.ChatInfoMessage(player, string.format("Chat color set to RGB(%d, %d, %d)", r, g, b))
+end
+
+-- In ServerRecv.lua
+RecvServer['ClaimKit'] = function(player, args)
+    local modData = player:getModData()
+    if modData.kitClaimed then
+        ServerSend.ChatErrorMessage(player, nil, "You have already claimed your starter kit.")
+        return
+    end
+
+    -- Tell the CLIENT to add the items to itself
+    ServerSend.Command(player, "ReceiveKitItems", {})
+
+    -- Mark as claimed on server and sync
+    modData.kitClaimed = true
+    player:transmitModData()
+    ServerSend.ChatInfoMessage(player, "Starter kit granted! Welcome to Revenant!")
+end
+
+RecvServer['ResetKit'] = function(player, args)
+    -- 1) Safety check: Only Admins can reset kit status
+    if player:getAccessLevel() ~= "Admin" then
+        ServerSend.ChatErrorMessage(player, nil, "Requires admin privileges.")
+        return
+    end
+
+    local modData = player:getModData()
+
+    -- 2) Setting a table value to 'nil' in Lua effectively deletes the key
+    modData.kitClaimed = nil
+
+    -- 3) Sync the change to the server database
+    player:transmitModData()
+
+    ServerSend.ChatInfoMessage(player, "[Admin] Your starter kit status has been reset. You can now use /claimkit again.")
+    print("TICS INFO: Admin " .. player:getUsername() .. " reset their own starter kit status for testing.")
 end
 
 local function OnClientCommand(module, command, player, args)
