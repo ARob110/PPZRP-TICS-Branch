@@ -4,7 +4,7 @@ local RadioManager = require('tics/server/radio/RadioManager')
 local ServerSend   = require('tics/server/network/ServerSend')
 local StringParser = require('tics/shared/utils/StringParser')
 local World        = require('tics/shared/utils/World')
-local BioServer = require("tics/BioServer")
+local BioServer = require("tics/server/BioServer")
 
 local ChatMessage  = {}
 
@@ -188,6 +188,8 @@ local function SetMessageTypeSettings()
             ['hideCallout'] = SandboxVars.TICS.HideCallout,
             ['isVoiceEnabled'] = SandboxVars.TICS.VoiceEnabled,
             ['portrait'] = SandboxVars.TICS.BubblePortrait,
+            ['focusEnabled'] = SandboxVars.TICS.FocusEnabled ~= false,  -- Default true if not set
+            ['focusRange'] = SandboxVars.TICS.FocusRange or 30,
         },
         ['globalevent'] = {
             range       = -1,              -- infinite range, or set your own
@@ -472,7 +474,6 @@ function ChatMessage.ChangeName(player, fullName)
     local bioLine = player:getModData()["BioLine"] or "" -- Get bio, default to empty string
 
     local spacer = "   " -- Adjust spacing as needed
-    local newOverheadName = newName .. spacer .. "\n" .. bioLine -- Combine name and bio
 
     ServerSend.ChatInfoMessage(player, "Your name has been changed to " .. newName .. ".")
     print("Player " .. player:getUsername() .. " changed their name to " .. newName)
@@ -565,10 +566,23 @@ local function IsInRadioEmittingRange(radioEmitters, receiver)
         return false, -1
     end
     for _, radioEmitter in pairs(radioEmitters) do
-        local radioData = radioEmitter:getDeviceData()
+        local radioData = nil
+        
+        -- FIX: Check if the emitter is a Vehicle
+        if instanceof(radioEmitter, "BaseVehicle") then
+            local part = radioEmitter:getPartById("Radio")
+            if part then 
+                radioData = part:getDeviceData() 
+            end
+        -- Otherwise assume it's a normal radio/item
+        elseif radioEmitter.getDeviceData then
+            radioData = radioEmitter:getDeviceData()
+        end
+
         if radioData ~= nil then
             local transmitRange = radioData:getTransmitRange()
             local distance = World.distanceManhatten(radioEmitter, receiver)
+            
             if distance <= transmitRange then
                 return true, distance
             end
@@ -727,9 +741,12 @@ end
 local function GetEmittingRadios(player, packetType, messageType, range)
     local radioEmission = false
     local radioFrequencies = {}
+    
+    -- Only proceed if this message type allows radio use
     if ChatMessage.MessageTypeSettings[messageType] and ChatMessage.MessageTypeSettings[messageType]['radio'] == true
             and packetType == 'ChatMessage' and range > 0
     then
+        -- 1. Check World Radios
         local radios = World.getItemsInRangeByGroup(player, range, 'IsoRadio')
         for _, radio in pairs(radios) do
             local radioData = radio:getDeviceData()
@@ -738,26 +755,43 @@ local function GetEmittingRadios(player, packetType, messageType, range)
                 if radioData:getIsTwoWay() and radioData:getIsTurnedOn()
                         and not radioData:getMicIsMuted() and frequency ~= nil
                 then
-                    if radioFrequencies[frequency] == nil then
-                        radioFrequencies[frequency] = {}
-                    end
+                    if radioFrequencies[frequency] == nil then radioFrequencies[frequency] = {} end
                     table.insert(radioFrequencies[frequency], radio)
                     radioEmission = true
                 end
             end
         end
+
+        -- 2. Check Player Inventory/Belt Radio
         local radio = GetPlayerRadio(player)
         local radioData = radio and radio:getDeviceData() or nil
         if radioData then
             local frequency = radioData:getChannel()
-            if radioData and radioData:getIsTwoWay() and radioData:getIsTurnedOn()
+            if radioData:getIsTwoWay() and radioData:getIsTurnedOn()
                     and not radioData:getMicIsMuted() and frequency ~= nil
             then
-                if radioFrequencies[frequency] == nil then
-                    radioFrequencies[frequency] = {}
-                end
+                if radioFrequencies[frequency] == nil then radioFrequencies[frequency] = {} end
                 table.insert(radioFrequencies[frequency], radio)
                 radioEmission = true
+            end
+        end
+
+        -- 3. Check Vehicle Radio (THE CRITICAL MISSING PIECE)
+        local vehicle = player:getVehicle()
+        if vehicle then
+            local part = vehicle:getPartById("Radio")
+            if part then
+                local vehicleRadioData = part:getDeviceData()
+                if vehicleRadioData then
+                    local frequency = vehicleRadioData:getChannel()
+                    if vehicleRadioData:getIsTwoWay() and vehicleRadioData:getIsTurnedOn()
+                       and not vehicleRadioData:getMicIsMuted() and frequency ~= nil 
+                    then
+                        if radioFrequencies[frequency] == nil then radioFrequencies[frequency] = {} end
+                        table.insert(radioFrequencies[frequency], vehicle) -- Adds the car to the list
+                        radioEmission = true
+                    end
+                end
             end
         end
     end
@@ -798,6 +832,13 @@ function ChatMessage.ProcessMessage(player, args, packetType, sendError)
     if args.type == nil then
         print('TICS error: Received a message from "' .. player:getUsername() .. '" with no type') -- Keep actual errors
         return
+    end
+
+    -- OOC types force default language (English) - set to 'English' as server-side safety net
+    -- The client should already send DefaultLanguage, but this catches edge cases
+    local oocTypes = { ['ooc'] = true, ['factionooc'] = true, ['admin'] = true, ['general'] = true }
+    if oocTypes[args.type] then
+        args.language = 'English'
     end
 
     if not IsAllowedToTalk(player, args, sendError) then
