@@ -13,16 +13,19 @@ function ChatUI:prerender()
     end
     self:makeFade(self.fade:fraction())
 
-    -- local a = self.backgroundColor.a
+    -- Get custom colors from instance or use defaults
+    local titleBarColor = self.customTitleBarColor or { r = 20, g = 20, b = 20 }
+    local bgColor = self.customBackgroundColor or { r = 42, g = 42, b = 42 }
+    
     local titleBar = {
-        r = 20 / 255,
-        g = 20 / 255,
-        b = 20 / 255,
+        r = titleBarColor.r / 255,
+        g = titleBarColor.g / 255,
+        b = titleBarColor.b / 255,
     }
     local background = {
-        r = 42 / 255,
-        g = 42 / 255,
-        b = 42 / 255,
+        r = bgColor.r / 255,
+        g = bgColor.g / 255,
+        b = bgColor.b / 255,
     }
     local titlebarAlpha = self:calcAlpha(ISChat.minControlOpaque, ISChat.maxGeneralOpaque, self.fade:fraction())
     self:drawRect(0, 0, self:getWidth(), self:titleBarHeight(), math.max(titlebarAlpha + 0.3, 1),
@@ -180,7 +183,7 @@ function ChatUI.tabPanel:render()
                     end
                 end
                 alpha = self.blinkTabAlpha
-                local r, g, b = 70 / 255, 40 / 255, 40 / 255
+                local r, g, b = 180 / 255, 50 / 255, 50 / 255
                 self:drawRect(x, 0, tabWidth, self.tabHeight - 1, alpha, r, g, b)
                 -- self:drawTextureScaled(ISTabPanel.tabUnSelected, x, 0, tabWidth, self.tabHeight - 1, self
                 --     .tabTransparency, 1, 1, 1)
@@ -190,7 +193,7 @@ function ChatUI.tabPanel:render()
                 -- self:drawTextureScaled(ISTabPanel.tabUnSelected, x, 0, tabWidth, self.tabHeight - 1, self
                 --     .tabTransparency, 1, 1, 1)
                 -- self:drawRect(x, 0, tabWidth, self.tabHeight - 1, alpha, 1, 1, 1)
-                local r, g, b = 70 / 255, 40 / 255, 40 / 255
+                local r, g, b = 180 / 255, 50 / 255, 50 / 255
                 self:drawRect(x, 0, tabWidth, self.tabHeight - 1, alpha, r, g, b)
             else
                 -- self:drawTextureScaled(ISTabPanel.tabUnSelected, x, 0, tabWidth, self.tabHeight - 1, self
