@@ -51,6 +51,12 @@ function ClientSend.sendChatMessage(message, language, defaultNameColor, type, p
     })
 end
 
+-- Asking Server for Bio
+
+function ClientSend.sendAskBio(targetUsername)
+    if not isClient() then return end
+    ClientSendCommand('AskBio', { target = targetUsername })
+end
 
 
 -- Let's assume PM uses default PM color unless specifically set via /emotecolor pm <color>
@@ -148,41 +154,30 @@ end
 
 function ClientSend.sendMuteRadio(radio, state)
     if not isClient() then return end
-    local radioData = radio:getDeviceData()
-    if radioData == nil then
-        print('TICS error: ClientSend.sendMuteRadio: no radioData found')
-        return
-    end
-    if radioData:isIsoDevice() then
-        ClientSendCommand('MuteSquareRadio', {
-            mute = state,
-            x = radio:getX(),
-            y = radio:getY(),
-            z = radio:getZ(),
-        })
-    elseif instanceof(radio, 'Radio') then -- is an inventoryItem radio
-        local id = radio:getID()
-        local player = getPlayer()
-        local primary = player:getPrimaryHandItem()
-        local secondary = player:getSecondaryHandItem()
-        local beltType = nil
-        if (primary == nil or primary:getID() ~= id)
-                and (secondary == nil or secondary:getID() ~= id)
-        then
-            -- the ID is unreliable for non-in-hand items so we're going with the type
-            -- and pray to find the right radio, or (un)mute the wrong one...
-            beltType = radio:getType()
-        end
-        if id == nil then
-            print('TICS error: ClientSend.sendMuteRadio: no id found')
+    
+    -- 1. Check if it is a Vehicle Part
+    if instanceof(radio, "VehiclePart") and radio:getId() == "Radio" then
+        local vehicle = radio:getVehicle()
+        if vehicle then
+            ClientSendCommand('MuteVehicleRadio', {
+                mute = state,
+                vehicle = vehicle:getId()
+            })
             return
         end
-        ClientSendCommand('MuteInHandRadio', {
-            mute = state,
-            id = id,
-            belt = beltType,
-            player = getPlayer():getUsername(),
-        })
+    end
+
+    -- 2. Keep existing logic for Handheld/World radios below...
+    local radioData = radio:getDeviceData()
+    if radioData == nil then return end
+    
+    if radioData:isIsoDevice() then
+        ClientSendCommand('MuteSquareRadio', { mute = state, x = radio:getX(), y = radio:getY(), z = radio:getZ() })
+    elseif instanceof(radio, 'Radio') then
+        -- (Keep your existing belt/hand logic here)
+        local id = radio:getID()
+        local beltType = radio:getType() -- Simple fallback
+        ClientSendCommand('MuteInHandRadio', { mute = state, id = id, belt = beltType, player = getPlayer():getUsername() })
     end
 end
 

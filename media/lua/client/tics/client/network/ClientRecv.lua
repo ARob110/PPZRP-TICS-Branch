@@ -1,7 +1,7 @@
 local AvatarManager = require('tics/client/AvatarManager')
 local Radio = require('tics/client/Radio')
 local BioManager = require('tics/client/BioManager') -- Require the new manager
-local BioMeta = require("tics/bio/BioSync")
+local BioMeta = require("tics/client/BioSync")
 
 local ClientRecv = {}
 
@@ -65,6 +65,14 @@ ClientRecv['RadioInHandState'] = function(args)
     Radio.SyncInHand(
             args.id, args.turnedOn, args.mute, args.power, args.volume,
             args.frequency)
+end
+
+ClientRecv["SyncBio"] = function(args)
+    local username = args.username
+    local bio = args.bio
+    
+    -- Update the cache immediately
+    BioMeta.Update(username, bio)
 end
 
 ClientRecv['ApprovedAvatar'] = function(args)
@@ -313,6 +321,31 @@ ClientRecv["OverheadBioChange"] = function(args)
     else
         print("TICS error: No player found with onlineID:", onlineID)
     end
+end
+
+-- In ClientRecv.lua
+ClientRecv['ReceiveKitItems'] = function(args)
+    local player = getPlayer()
+    local inv = player:getInventory()
+
+    for i = 1, 10 do
+        inv:AddItem("Dire.MoneyHundred")
+    end
+    inv:AddItem("Dire.DriversLicense")
+    inv:AddItem("Base.Wallet4")
+    inv:AddItem("Base.Bandage")
+    inv:AddItem("Base.Bandage")
+    inv:AddItem("Base.SkillRecoveryBoundJournal")
+    inv:AddItem("Base.PBBaseballBatAlu")
+    inv:AddItem("Base.Pencil")
+    inv:AddItem("Base.Scissors")
+    inv:AddItem("Base.Needle")
+    inv:AddItem("Base.Thread")
+    inv:AddItem("Base.Crisps3")
+    inv:AddItem("AuthenticZClothing.Bag_Schoolbag_Spiffo2_Tier_1")
+
+    -- Force a UI refresh
+    player:getInventory():setDrawDirty(true)
 end
 
 function OnServerCommand(module, command, args)
