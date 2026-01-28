@@ -24,6 +24,7 @@ local StringFormat           = require('tics/shared/utils/StringFormat')
 local StringParser           = require('tics/shared/utils/StringParser')
 local TypingDots             = require('tics/client/ui/TypingDots')
 local World                  = require('tics/shared/utils/World')
+local FocusManager = require('tics/client/FocusManager')
 
 ISChat.sentMessages      = {}   -- ring-buffer (max 5)
 ISChat.sentMessageIndex  = nil  -- current cursor in that buffer
@@ -51,6 +52,9 @@ ISChat.allChatStreams[19] = { name = 'localevent',    command = '/localevent',  
 ISChat.allChatStreams[20] = { name = 'globalevent',    command = '/globalevent',    shortCommand = nil, tabID = 1, forget = true }
 ISChat.allChatStreams[21] = { name = 'admindolong',    command = '/admindolong',    shortCommand = '/adl', tabID = 1 }
 ISChat.allChatStreams[22] = { name = 'factionooc', command = '/factionooc ', shortCommand = '/fooc ', tabID = 5 }
+ISChat.allChatStreams[23] = { name = 'whisperme', command = '/whisperme', shortCommand = '/mew', tabID = 1 }
+ISChat.allChatStreams[24] = { name = 'focus', command = nil, shortCommand = nil, tabID = 6 }
+
 
 ISChat.ticsCommand    = {}
 ISChat.ticsCommand[1] = { name = 'color', command = '/color', shortCommand = nil }
@@ -68,13 +72,23 @@ ISChat.ticsCommand[12] = { name = 'playsoundlocal', command = '/playsoundlocal',
 ISChat.ticsCommand[13] = { name = 'playsoundquiet', command = '/playsoundquiet', shortCommand = '/psq' }
 ISChat.ticsCommand[14] = { name = 'bio', command = '/bio', shortCommand = nil }
 ISChat.ticsCommand[15] = { name = 'emotecolor', command = '/emotecolor', shortCommand = nil }
-
+ISChat.ticsCommand[16] = { name = 'claimkit', command = '/claimkit', shortCommand = nil }
+ISChat.ticsCommand[17] = { name = 'resetkit', command = '/resetkit', shortCommand = nil }
+ISChat.ticsCommand[18] = { name = 'italiccolor', command = '/italiccolor', shortCommand = '/ic' }
+ISChat.ticsCommand[19] = { name = 'boldcolor', command = '/boldcolor', shortCommand = '/bc' }
+ISChat.ticsCommand[20] = { name = 'dialoguecolor', command = '/dialoguecolor', shortCommand = '/dc' }
+ISChat.ticsCommand[21] = { name = 'unfocusall', command = '/unfocusall', shortCommand = nil }
+ISChat.ticsCommand[22] = { name = 'focuslist', command = '/focuslist', shortCommand = nil }
+ISChat.ticsCommand[23] = { name = 'focus', command = '/focus', shortCommand = nil }
+ISChat.ticsCommand[24] = { name = 'unfocus', command = '/unfocus', shortCommand = nil }
 
 ISChat.defaultTabStream    = {}
 ISChat.defaultTabStream[1] = ISChat.allChatStreams[1]
 ISChat.defaultTabStream[2] = ISChat.allChatStreams[9]
 ISChat.defaultTabStream[3] = ISChat.allChatStreams[10]
 ISChat.defaultTabStream[4] = ISChat.allChatStreams[11]
+ISChat.defaultTabStream[5] = ISChat.allChatStreams[22]  -- factionooc for Faction OOC tab
+ISChat.defaultTabStream[6] = ISChat.allChatStreams[1]   -- say for Focus tab (defaults to /say)
 
 
 ISChat.lastTabStream    = {}
@@ -82,6 +96,8 @@ ISChat.lastTabStream[1] = ISChat.defaultTabStream[1]
 ISChat.lastTabStream[2] = ISChat.defaultTabStream[2]
 ISChat.lastTabStream[3] = ISChat.defaultTabStream[3]
 ISChat.lastTabStream[4] = ISChat.defaultTabStream[4]
+ISChat.lastTabStream[5] = ISChat.defaultTabStream[5]
+ISChat.lastTabStream[6] = ISChat.defaultTabStream[6]
 
 -- Ensure this is defined only once per client
 local lastBuffAppliedHour = 0
@@ -304,9 +320,32 @@ local function InitGlobalModData()
         ticsModData['showChatBubbles'] = true
     end
     ISChat.instance.showChatBubbles = ticsModData['showChatBubbles']
+    
+    -- Initialize typing indicator setting (shows "X is typing..." in chatbox)
+    -- Default is OFF for performance
+    if ticsModData['showTypingIndicator'] == nil then
+        ticsModData['showTypingIndicator'] = false
+    end
+    ISChat.instance.showTypingIndicator = ticsModData['showTypingIndicator']
+    ISChat.instance.typingUsers = {}
+    
+    -- Initialize typing bubbles setting (overhead dots) - default ON
+    if ticsModData['showTypingBubbles'] == nil then
+        ticsModData['showTypingBubbles'] = true
+    end
+    ISChat.instance.showTypingBubbles = ticsModData['showTypingBubbles']
+    
     if ticsModData['voicePitch'] == nil then
         local randomPitch = RandomVoicePitch(getPlayer():getVisual():isFemale())
         SetPlayerPitch(randomPitch)
+    end
+    
+    -- Load custom chat background colors
+    if ticsModData['chatBackgroundColor'] ~= nil then
+        ISChat.instance.customBackgroundColor = ticsModData['chatBackgroundColor']
+    end
+    if ticsModData['chatTitleBarColor'] ~= nil then
+        ISChat.instance.customTitleBarColor = ticsModData['chatTitleBarColor']
     end
 end
 
@@ -416,9 +455,9 @@ local function ProcessChatCommand(stream, command)
     elseif stream.name == 'general' then
         ClientSend.sendChatMessage(command, language, playerColor, 'general', pitch, false)
     elseif stream.name == 'admin' then
-        ClientSend.sendChatMessage(command, language, playerColor, 'admin', pitch, false)
+        ClientSend.sendChatMessage(command, LanguageManager.DefaultLanguage, playerColor, 'admin', pitch, false)
     elseif stream.name == 'ooc' then
-        ClientSend.sendChatMessage(command, language, playerColor, 'ooc', pitch, false)
+        ClientSend.sendChatMessage(command, LanguageManager.DefaultLanguage, playerColor, 'ooc', pitch, false)
     elseif stream.name == 'whisperme' then
         ClientSend.sendChatMessage(command, language, playerColor, 'whisperme', pitch, true)
     elseif stream.name == 'melow' then
@@ -443,8 +482,7 @@ local function ProcessChatCommand(stream, command)
         ClientSend.sendChatMessage(command, language, playerColor, 'globalevent', pitch, false)
         ISChat.sendInfoToCurrentTab("Global event sent (client-side).")
     elseif stream.name == 'factionooc' then
-        -- Send like OOC (disableVerb = true), but with type 'factionooc'
-        ClientSend.sendChatMessage(command, language, playerColor, 'factionooc', pitch, true)
+        ClientSend.sendChatMessage(command, LanguageManager.DefaultLanguage, playerColor, 'factionooc', pitch, true)
     else
         return false
     end
@@ -869,6 +907,255 @@ local function ProcessEmoteColorCommand(arguments)
     return true -- Indicate success
 end
 
+-- Process /italiccolor command - sets custom color for *italic* markdown
+local function ProcessItalicColorCommand(arguments)
+    if not arguments or #arguments == 0 then
+        -- Show current color if no argument
+        local modData = ISChat.instance and ISChat.instance.ticsModData
+        if modData and modData.formatColors and modData.formatColors.italic then
+            local c = modData.formatColors.italic
+            ISChat.sendInfoToCurrentTab(string.format("Current italic color: R:%d G:%d B:%d", c[1], c[2], c[3]))
+        else
+            ISChat.sendInfoToCurrentTab("Italic color: using default (server or fallback).")
+        end
+        return true
+    end
+
+    -- Check for reset
+    if arguments:lower() == "reset" or arguments:lower() == "clear" then
+        ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+        ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+        ISChat.instance.ticsModData.formatColors.italic = nil
+        ModData.add('tics', ISChat.instance.ticsModData)
+        ISChat.sendInfoToCurrentTab("Italic color reset to default.")
+        return true
+    end
+
+    -- Try parsing the color string
+    local newColor = StringParser.rgbStringToRGB(arguments) or StringParser.hexaStringToRGB(arguments)
+    if not newColor then
+        ISChat.sendErrorToCurrentTab("Invalid color format. Use RGB (e.g., 93,255,60) or Hex (e.g., #5DFF3C).")
+        return false
+    end
+
+    -- Ensure modData structure exists
+    ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+    ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+
+    -- Store the color
+    ISChat.instance.ticsModData.formatColors.italic = newColor
+
+    -- Save the updated modData
+    ModData.add('tics', ISChat.instance.ticsModData)
+
+    -- Provide feedback
+    ISChat.sendInfoToCurrentTab(string.format("Italic (*text*) color set to R:%d G:%d B:%d",
+            newColor[1], newColor[2], newColor[3]))
+    return true
+end
+
+-- Process /boldcolor command - sets custom color for **bold** markdown
+local function ProcessBoldColorCommand(arguments)
+    if not arguments or #arguments == 0 then
+        -- Show current color if no argument
+        local modData = ISChat.instance and ISChat.instance.ticsModData
+        if modData and modData.formatColors and modData.formatColors.bold then
+            local c = modData.formatColors.bold
+            ISChat.sendInfoToCurrentTab(string.format("Current bold color: R:%d G:%d B:%d", c[1], c[2], c[3]))
+        else
+            ISChat.sendInfoToCurrentTab("Bold color: using default (server or fallback).")
+        end
+        return true
+    end
+
+    -- Check for reset
+    if arguments:lower() == "reset" or arguments:lower() == "clear" then
+        ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+        ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+        ISChat.instance.ticsModData.formatColors.bold = nil
+        ModData.add('tics', ISChat.instance.ticsModData)
+        ISChat.sendInfoToCurrentTab("Bold color reset to default.")
+        return true
+    end
+
+    -- Try parsing the color string
+    local newColor = StringParser.rgbStringToRGB(arguments) or StringParser.hexaStringToRGB(arguments)
+    if not newColor then
+        ISChat.sendErrorToCurrentTab("Invalid color format. Use RGB (e.g., 255,28,77) or Hex (e.g., #FF1C4D).")
+        return false
+    end
+
+    -- Ensure modData structure exists
+    ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+    ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+
+    -- Store the color
+    ISChat.instance.ticsModData.formatColors.bold = newColor
+
+    -- Save the updated modData
+    ModData.add('tics', ISChat.instance.ticsModData)
+
+    -- Provide feedback
+    ISChat.sendInfoToCurrentTab(string.format("Bold (**text**) color set to R:%d G:%d B:%d",
+            newColor[1], newColor[2], newColor[3]))
+    return true
+end
+
+-- Process /dialoguecolor command - sets custom color for "quoted dialogue" in emotes
+local function ProcessDialogueColorCommand(arguments)
+    if not arguments or #arguments == 0 then
+        -- Show current color if no argument
+        local modData = ISChat.instance and ISChat.instance.ticsModData
+        if modData and modData.formatColors and modData.formatColors.dialogue then
+            local c = modData.formatColors.dialogue
+            ISChat.sendInfoToCurrentTab(string.format("Current dialogue color: R:%d G:%d B:%d", c[1], c[2], c[3]))
+        else
+            ISChat.sendInfoToCurrentTab("Dialogue color: using default (white).")
+        end
+        return true
+    end
+
+    -- Check for reset
+    if arguments:lower() == "reset" or arguments:lower() == "clear" then
+        ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+        ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+        ISChat.instance.ticsModData.formatColors.dialogue = nil
+        ModData.add('tics', ISChat.instance.ticsModData)
+        ISChat.sendInfoToCurrentTab("Dialogue color reset to default (white).")
+        return true
+    end
+
+    -- Try parsing the color string
+    local newColor = StringParser.rgbStringToRGB(arguments) or StringParser.hexaStringToRGB(arguments)
+    if not newColor then
+        ISChat.sendErrorToCurrentTab("Invalid color format. Use RGB (e.g., 255,255,255) or Hex (e.g., #FFFFFF).")
+        return false
+    end
+
+    -- Ensure modData structure exists
+    ISChat.instance.ticsModData = ISChat.instance.ticsModData or {}
+    ISChat.instance.ticsModData.formatColors = ISChat.instance.ticsModData.formatColors or {}
+
+    -- Store the color
+    ISChat.instance.ticsModData.formatColors.dialogue = newColor
+
+    -- Save the updated modData
+    ModData.add('tics', ISChat.instance.ticsModData)
+
+    -- Provide feedback
+    ISChat.sendInfoToCurrentTab(string.format("Dialogue (\"quoted text\") color set to R:%d G:%d B:%d",
+            newColor[1], newColor[2], newColor[3]))
+    return true
+end
+
+local function ProcessFocusCommand(arguments)
+    if not FocusManager then
+        ISChat.sendErrorToCurrentTab("Focus feature is not available.")
+        return true
+    end
+
+    if not FocusManager.IsEnabled() then
+        ISChat.sendErrorToCurrentTab("Focus feature is not enabled on this server.")
+        return true
+    end
+
+    if not arguments or arguments == "" then
+        return false
+    end
+
+    local player, username = FocusManager.FindPlayerByIdentifier(arguments)
+
+    if not username then
+        username = arguments:gsub('^"', ''):gsub('"$', '')
+    end
+
+    local success, message = FocusManager.FocusOn(username)
+
+    if success then
+        ISChat.sendInfoToCurrentTab(message)
+    else
+        ISChat.sendErrorToCurrentTab(message)
+    end
+
+    return true
+end
+
+local function ProcessUnfocusCommand(arguments)
+    if not FocusManager then
+        ISChat.sendErrorToCurrentTab("Focus feature is not available.")
+        return true
+    end
+
+    if not FocusManager.IsEnabled() then
+        ISChat.sendErrorToCurrentTab("Focus feature is not enabled on this server.")
+        return true
+    end
+
+    if not arguments or arguments == "" then
+        return false
+    end
+
+    local player, username = FocusManager.FindPlayerByIdentifier(arguments)
+
+    if not username then
+        username = arguments:gsub('^"', ''):gsub('"$', '')
+    end
+
+    local success, message = FocusManager.UnfocusOn(username)
+
+    if success then
+        ISChat.sendInfoToCurrentTab(message)
+    else
+        ISChat.sendErrorToCurrentTab(message)
+    end
+
+    return true
+end
+
+local function ProcessUnfocusAllCommand()
+    if not FocusManager then
+        ISChat.sendErrorToCurrentTab("Focus feature is not available.")
+        return
+    end
+
+    if not FocusManager.IsEnabled() then
+        ISChat.sendErrorToCurrentTab("Focus feature is not enabled on this server.")
+        return
+    end
+
+    local success, message = FocusManager.UnfocusAll()
+
+    if success then
+        ISChat.sendInfoToCurrentTab(message)
+    else
+        ISChat.sendErrorToCurrentTab(message)
+    end
+end
+
+local function ProcessFocusListCommand()
+    if not FocusManager then
+        ISChat.sendErrorToCurrentTab("Focus feature is not available.")
+        return
+    end
+
+    if not FocusManager.IsEnabled() then
+        ISChat.sendErrorToCurrentTab("Focus feature is not enabled on this server.")
+        return
+    end
+
+    local focused = FocusManager.GetFocusedPlayers()
+
+    if #focused == 0 then
+        ISChat.sendInfoToCurrentTab("You are not focused on anyone.")
+        return
+    end
+
+    ISChat.sendInfoToCurrentTab("Currently focused on " .. #focused .. " player(s):")
+    for _, username in ipairs(focused) do
+        local charName = FocusManager.GetCharacterName(username)
+        ISChat.sendInfoToCurrentTab("  - " .. charName)
+    end
+end
 
 local function ProcessTicsCommand(ticsCommand, message)
     local arguments = GetArgumentsFromMessage(ticsCommand, message)
@@ -973,6 +1260,14 @@ local function ProcessTicsCommand(ticsCommand, message)
     elseif ticsCommand['name'] == 'playsoundquiet' then
         ProcessPlaySoundQuietCommand(arguments)
 
+    elseif ticsCommand['name'] == 'claimkit' then
+        sendClientCommand("TICS", "ClaimKit", {})
+        return true
+
+    elseif ticsCommand['name'] == 'resetkit' then
+        sendClientCommand("TICS", "ResetKit", {})
+        return true
+
     elseif ticsCommand['name'] == 'bio' then
         ------------------------------------------------------------
         -- /bio  (show / set / clear)
@@ -1021,6 +1316,46 @@ local function ProcessTicsCommand(ticsCommand, message)
             return true
         end
         return true -- Indicate command was handled
+
+    elseif ticsCommand['name'] == 'italiccolor' then
+        if not ProcessItalicColorCommand(arguments) then
+            ISChat.sendErrorToCurrentTab("Usage: /italiccolor <color> (e.g. /italiccolor 93,255,60 or /italiccolor #5DFF3C) or /italiccolor reset")
+            return true
+        end
+        return true
+
+    elseif ticsCommand['name'] == 'boldcolor' then
+        if not ProcessBoldColorCommand(arguments) then
+            ISChat.sendErrorToCurrentTab("Usage: /boldcolor <color> (e.g. /boldcolor 255,28,77 or /boldcolor #FF1C4D) or /boldcolor reset")
+            return true
+        end
+        return true
+
+    elseif ticsCommand['name'] == 'dialoguecolor' then
+        if not ProcessDialogueColorCommand(arguments) then
+            ISChat.sendErrorToCurrentTab("Usage: /dialoguecolor <color> (e.g. /dialoguecolor 255,255,255 or /dialoguecolor #FFFFFF) or /dialoguecolor reset")
+            return true
+        end
+        return true
+
+    elseif ticsCommand['name'] == 'focus' then
+        if not ProcessFocusCommand(arguments) then
+            ISChat.sendErrorToCurrentTab("Usage: /focus <username> or /focus \"<character name>\"")
+            return true
+        end
+        return true
+    elseif ticsCommand['name'] == 'unfocus' then
+        if not ProcessUnfocusCommand(arguments) then
+            ISChat.sendErrorToCurrentTab("Usage: /unfocus <username> or /unfocus \"<character name>\"")
+            return true
+        end
+        return true
+    elseif ticsCommand['name'] == 'unfocusall' then
+        ProcessUnfocusAllCommand()
+        return true
+    elseif ticsCommand['name'] == 'focuslist' then
+        ProcessFocusListCommand()
+        return true
 
     end
 end
@@ -1303,10 +1638,14 @@ function BuildMessageFromPacket(type, message, name, nameColor, textColor, frequ
     -- Parse the message using the determined message body color
     local parsedMessage = Parser.ParseTicsMessage(message, messageColor, 20, 200)
 
-    if type == "me" or "melow" or "melong" or "whisperme" or "do" or "dolong" or "dolow" or "localevent" or
-            "globalevent" then
-        -- Suppose we pick bright yellow for quotes
+    if type == "me" or type == "melow" or type == "melong" or type == "whisperme" or type == "do" or type == "dolong" or type == "dolow" or type == "localevent" or
+            type == "globalevent" then
+        -- Check for user's custom dialogue color, default to white
         local highlightColor = { 255, 255, 255 }
+        local modData = ISChat.instance and ISChat.instance.ticsModData
+        if modData and modData.formatColors and modData.formatColors.dialogue then
+            highlightColor = modData.formatColors.dialogue
+        end
         -- Overwrite the parsed body with highlighted quotes
         parsedMessage.body = highlightQuotedText(parsedMessage.body, highlightColor, messageColor)
     end
@@ -1434,6 +1773,10 @@ function CreatePlayerBubble(author, type, message, color, voiceEnabled, voicePit
     if ISChat.instance.typingDots[author] ~= nil then
         ISChat.instance.typingDots[author] = nil
     end
+    -- Also clear from in-chat typing indicator
+    if ISChat.instance.typingUsers and ISChat.instance.typingUsers[author] then
+        ISChat.instance.typingUsers[author] = nil
+    end
 end
 
 local function CreateSquareRadioBubble(position, message, messageColor, voicePitch)
@@ -1506,6 +1849,8 @@ end
 
 function ISChat.onTypingPacket(author, type)
     ISChat.instance.typingDots = ISChat.instance.typingDots or {}
+    ISChat.instance.typingUsers = ISChat.instance.typingUsers or {}
+    
     local onlineUsers = getOnlinePlayers()
     local authorObj = nil
     for i = 0, onlineUsers:size() - 1 do
@@ -1518,10 +1863,30 @@ function ISChat.onTypingPacket(author, type)
     if authorObj == nil then
         return
     end
-    if ISChat.instance.typingDots[author] then
-        ISChat.instance.typingDots[author]:refresh()
-    else
-        ISChat.instance.typingDots[author] = TypingDots:new(authorObj, 1)
+    
+    -- Track for in-chat typing indicator (only if not the local player)
+    local localPlayer = getPlayer()
+    local localUsername = localPlayer and localPlayer:getUsername()
+    if author ~= localUsername then
+        local characterName = authorObj:getDescriptor():getForename()
+        local surname = authorObj:getDescriptor():getSurname()
+        if surname and surname ~= "" then
+            characterName = characterName .. " " .. surname
+        end
+        local currentTime = Calendar.getInstance():getTimeInMillis()
+        ISChat.instance.typingUsers[author] = {
+            characterName = characterName,
+            expiryTime = currentTime + 3000
+        }
+    end
+    
+    -- Handle typing dots bubble (only if enabled)
+    if ISChat.instance.showTypingBubbles then
+        if ISChat.instance.typingDots[author] then
+            ISChat.instance.typingDots[author]:refresh()
+        else
+            ISChat.instance.typingDots[author] = TypingDots:new(authorObj, 1)
+        end
     end
 end
 
@@ -1617,15 +1982,15 @@ local function ReduceBoredomOnReceive()
 
     -- 🔵 Reduce hunger/thirst once per in-game hour
     local currentHour = getGameTime():getHour()
-    if currentHour ~= lastHungerThirstHour then
+    if currentHour >= lastHungerThirstHour + 3 then
         -- Hunger
         local hunger = stats:getHunger()
-        local hungerReduction = 0.30
+        local hungerReduction = 0.15
         stats:setHunger(math.max(0, hunger - hungerReduction))
 
         -- Thirst
         local thirst = stats:getThirst()
-        local thirstReduction = 0.30
+        local thirstReduction = 0.15
         stats:setThirst(math.max(0, thirst - thirstReduction))
 
         -- Update cooldown timestamp
@@ -1871,6 +2236,28 @@ function ISChat.onMessagePacket(
                 stream['name']
         )
     end
+
+    -- === FOCUS TAB INTEGRATION ===
+    if FocusManager and FocusManager.IsEnabled() and FocusManager.ShouldShowInFocusTab(author) then
+        local focusableTypes = {
+            ['say'] = true, ['whisper'] = true, ['low'] = true, ['yell'] = true,
+            ['me'] = true, ['do'] = true, ['ooc'] = true,
+            ['whisperme'] = true, ['melow'] = true, ['melong'] = true,
+            ['dolow'] = true, ['dolong'] = true,
+        }
+
+        if focusableTypes[type] and ISChat.instance.tabs[6] then
+            AddMessageToTab(
+                    6,  -- Focus tab ID
+                    language,
+                    time,
+                    formattedMessage,
+                    line,
+                    stream['name']
+            )
+        end
+    end
+    -- === END FOCUS TAB INTEGRATION ===
 end
 
 
@@ -2347,28 +2734,98 @@ function ISChat:prerender()
             bubbles[index] = nil
         end
     end
+    
     ChatUI.prerender(self)
 end
 
+-- Renders "X is typing..." indicator - called from ChatText:render
+-- chatText parameter is the ChatText panel that's currently rendering
+function ISChat.renderTypingIndicatorInChat(chatText)
+    local instance = ISChat.instance
+    if not instance or not instance.showTypingIndicator then
+        return
+    end
+    
+    instance.typingUsers = instance.typingUsers or {}
+    
+    -- Clean up expired entries and collect active typers
+    local currentTime = Calendar.getInstance():getTimeInMillis()
+    local activeTypers = {}
+    local expiredUsers = {}
+    
+    for username, data in pairs(instance.typingUsers) do
+        if data.expiryTime < currentTime then
+            table.insert(expiredUsers, username)
+        else
+            table.insert(activeTypers, data.characterName)
+        end
+    end
+    
+    for _, username in ipairs(expiredUsers) do
+        instance.typingUsers[username] = nil
+    end
+    
+    if #activeTypers == 0 then
+        return
+    end
+    
+    -- Sort names for consistent display
+    table.sort(activeTypers)
+    
+    -- Build typing message
+    local typingText
+    if #activeTypers == 1 then
+        typingText = activeTypers[1] .. " is typing..."
+    elseif #activeTypers == 2 then
+        typingText = activeTypers[1] .. " and " .. activeTypers[2] .. " are typing..."
+    elseif #activeTypers <= 4 then
+        typingText = table.concat(activeTypers, ", ", 1, #activeTypers - 1) .. " and " .. activeTypers[#activeTypers] .. " are typing..."
+    else
+        typingText = "Several people are typing..."
+    end
+    
+    -- Draw at top of chat text area with background
+    local x = 4
+    local y = 2
+    
+    -- Measure text for background
+    local textWidth = getTextManager():MeasureStringX(UIFont.Small, typingText)
+    local textHeight = getTextManager():getFontFromEnum(UIFont.Small):getLineHeight()
+    
+    -- Draw background so text is visible
+    chatText:drawRect(x, y, textWidth + 8, textHeight + 2, 0.9, 0.15, 0.15, 0.15)
+    
+    -- Draw the text
+    chatText:drawText(typingText, x + 4, y + 1, 0.75, 0.75, 0.75, 1, UIFont.Small)
+end
+
 function IsOnlyCommand(text)
-    return text:match('/%a* *') == text
+    -- Must have at least one letter after the slash to be a command prefix
+    -- This allows // to work as a shortcut
+    return text:match('^/%a+ *$') == text
 end
 
 function ISChat.onTextChange()
     ISChat.sentMessageIndex = nil   -- typing resets history cursor
     local t = ISChat.instance.textEntry
     local internalText = t:getInternalText()
+    
+    -- Only reset to "/" if we're typing a NEW command (slash after just a command prefix)
+    -- This allows multiple slashes in actual message text
     if #internalText > 1
-            and IsOnlyCommand(internalText:sub(1, #internalText - 1))
             and internalText:sub(#internalText) == '/'
     then
-        t:setText("/")
-        if ISChat.instance.rangeIndicator then
-            ISChat.instance.rangeIndicator:unsubscribe()
+        local textBeforeSlash = internalText:sub(1, #internalText - 1)
+        -- Only reset if what came before is JUST a command (like "/say " or "/s ")
+        if IsOnlyCommand(textBeforeSlash) then
+            t:setText("/")
+            if ISChat.instance.rangeIndicator then
+                ISChat.instance.rangeIndicator:unsubscribe()
+            end
+            ISChat.instance.rangeIndicator = nil
+            ISChat.instance.lastStream = nil
+            return
         end
-        ISChat.instance.rangeIndicator = nil
-        ISChat.instance.lastStream = nil
-        return
     end
 
     if internalText == '/r' and ISChat.instance.lastPrivateMessageAuthor ~= nil
@@ -2600,6 +3057,31 @@ ISChat.onRecvSandboxVars = function(messageTypeSettings)
     elseif ISChat.instance.tabs[5] ~= nil then
         RemoveTab('Faction OOC', 5) -- Remove if not enabled
     end
+    -- Focus tab handling
+    if TicsServerSettings['options'] and TicsServerSettings['options']['focusEnabled'] then
+        if ISChat.instance.tabs[6] == nil then
+            AddTab('Focus', 6)
+        end
+        -- Configure Focus tab to use same streams as General tab (for command support)
+        if ISChat.instance.tabs[6] then
+            ISChat.instance.tabs[6].chatStreams = {}
+            -- Copy all local chat streams so commands work from Focus tab
+            for _, stream in pairs(ISChat.allChatStreams) do
+                if stream['tabID'] == 1 and TicsServerSettings and TicsServerSettings[stream['name']] and TicsServerSettings[stream['name']]['enabled'] then
+                    table.insert(ISChat.instance.tabs[6].chatStreams, stream)
+                end
+            end
+            if #ISChat.instance.tabs[6].chatStreams >= 1 then
+                ISChat.instance.tabs[6].lastChatCommand = ISChat.instance.tabs[6].chatStreams[1].command or '/say '
+            else
+                ISChat.instance.tabs[6].lastChatCommand = '/say '
+            end
+        end
+        FocusManager.Initialize()
+    elseif ISChat.instance.tabs[6] ~= nil then
+        RemoveTab('Focus', 6)
+    end
+
     if ISChat.instance.tabCnt > 1 and not HasAtLeastOneChanelEnabled(1) then
         RemoveTab('General', 1)
     else
@@ -3277,21 +3759,31 @@ function ISChat:onGearButtonClick()
         return
     end
 
+    -- ========================================
+    -- CHAT OPTIONS (grouped submenu)
+    -- ========================================
+    local chatOptionsOption = context:addOption("Chat Options", nil)
+    local chatOptionsSubMenu = context:getNew(context)
+    context:addSubMenu(chatOptionsOption, chatOptionsSubMenu)
+
+    -- Timestamp toggle
     local timestampOptionName = getText("UI_chat_context_enable_timestamp")
     if self.showTimestamp then
         timestampOptionName = getText("UI_chat_context_disable_timestamp")
     end
-    context:addOption(timestampOptionName, ISChat.instance, ISChat.onToggleTimestampPrefix)
+    chatOptionsSubMenu:addOption(timestampOptionName, ISChat.instance, ISChat.onToggleTimestampPrefix)
 
+    -- Tags toggle
     local tagOptionName = getText("UI_chat_context_enable_tags")
     if self.showTitle then
         tagOptionName = getText("UI_chat_context_disable_tags")
     end
-    context:addOption(tagOptionName, ISChat.instance, ISChat.onToggleTagPrefix)
+    chatOptionsSubMenu:addOption(tagOptionName, ISChat.instance, ISChat.onToggleTagPrefix)
 
-    local fontSizeOption = context:addOption(getText("UI_chat_context_font_submenu_name"), ISChat.instance)
-    local fontSubMenu = context:getNew(context)
-    context:addSubMenu(fontSizeOption, fontSubMenu)
+    -- Font Size submenu
+    local fontSizeOption = chatOptionsSubMenu:addOption(getText("UI_chat_context_font_submenu_name"), ISChat.instance)
+    local fontSubMenu = chatOptionsSubMenu:getNew(chatOptionsSubMenu)
+    chatOptionsSubMenu:addSubMenu(fontSizeOption, fontSubMenu)
     fontSubMenu:addOption(getText("UI_chat_context_font_small"), ISChat.instance, ISChat.onFontSizeChange, "small")
     fontSubMenu:addOption(getText("UI_chat_context_font_medium"), ISChat.instance, ISChat.onFontSizeChange, "medium")
     fontSubMenu:addOption(getText("UI_chat_context_font_large"), ISChat.instance, ISChat.onFontSizeChange, "large")
@@ -3303,10 +3795,17 @@ function ISChat:onGearButtonClick()
         fontSubMenu:setOptionChecked(fontSubMenu.options[3], true)
     end
 
-    local minOpaqueOption = context:addOption(getText("UI_chat_context_opaque_min"), ISChat.instance)
-    local minOpaqueSubMenu = context:getNew(context)
-    context:addSubMenu(minOpaqueOption, minOpaqueSubMenu)
+    -- Opacity Settings submenu
     local opaques = { 0, 0.25, 0.5, 0.6, 0.75, 1 }
+    
+    local opacityOption = chatOptionsSubMenu:addOption("Opacity Settings", nil)
+    local opacitySubMenu = chatOptionsSubMenu:getNew(chatOptionsSubMenu)
+    chatOptionsSubMenu:addSubMenu(opacityOption, opacitySubMenu)
+
+    -- Min Opacity
+    local minOpaqueOption = opacitySubMenu:addOption(getText("UI_chat_context_opaque_min"), ISChat.instance)
+    local minOpaqueSubMenu = opacitySubMenu:getNew(opacitySubMenu)
+    opacitySubMenu:addSubMenu(minOpaqueOption, minOpaqueSubMenu)
     for i = 1, #opaques do
         if logTo01(opaques[i]) <= self.maxOpaque then
             local option = minOpaqueSubMenu:addOption((opaques[i] * 100) .. "%", ISChat.instance,
@@ -3319,9 +3818,10 @@ function ISChat:onGearButtonClick()
         end
     end
 
-    local maxOpaqueOption = context:addOption(getText("UI_chat_context_opaque_max"), ISChat.instance)
-    local maxOpaqueSubMenu = context:getNew(context)
-    context:addSubMenu(maxOpaqueOption, maxOpaqueSubMenu)
+    -- Max Opacity
+    local maxOpaqueOption = opacitySubMenu:addOption(getText("UI_chat_context_opaque_max"), ISChat.instance)
+    local maxOpaqueSubMenu = opacitySubMenu:getNew(opacitySubMenu)
+    opacitySubMenu:addSubMenu(maxOpaqueOption, maxOpaqueSubMenu)
     for i = 1, #opaques do
         if logTo01(opaques[i]) >= self.minOpaque then
             local option = maxOpaqueSubMenu:addOption((opaques[i] * 100) .. "%", ISChat.instance,
@@ -3334,12 +3834,12 @@ function ISChat:onGearButtonClick()
         end
     end
 
-    local fadeTimeOption = context:addOption(getText("UI_chat_context_opaque_fade_time_submenu_name"), ISChat.instance)
-    local fadeTimeSubMenu = context:getNew(context)
-    context:addSubMenu(fadeTimeOption, fadeTimeSubMenu)
+    -- Fade Time
+    local fadeTimeOption = opacitySubMenu:addOption(getText("UI_chat_context_opaque_fade_time_submenu_name"), ISChat.instance)
+    local fadeTimeSubMenu = opacitySubMenu:getNew(opacitySubMenu)
+    opacitySubMenu:addSubMenu(fadeTimeOption, fadeTimeSubMenu)
     local availFadeTime = { 0, 1, 2, 3, 5, 10 }
-    local option = fadeTimeSubMenu:addOption(getText("UI_chat_context_disable"), ISChat.instance, ISChat
-            .onFadeTimeChange, 0)
+    local option = fadeTimeSubMenu:addOption(getText("UI_chat_context_disable"), ISChat.instance, ISChat.onFadeTimeChange, 0)
     if 0 == self.fadeTime then
         fadeTimeSubMenu:setOptionChecked(option, true)
     end
@@ -3351,51 +3851,212 @@ function ISChat:onGearButtonClick()
         end
     end
 
-    local opaqueOnFocusOption = context:addOption(getText("UI_chat_context_opaque_on_focus"), ISChat.instance)
-    local opaqueOnFocusSubMenu = context:getNew(context)
-    context:addSubMenu(opaqueOnFocusOption, opaqueOnFocusSubMenu)
+    -- Opaque on Focus
+    local opaqueOnFocusOption = opacitySubMenu:addOption(getText("UI_chat_context_opaque_on_focus"), ISChat.instance)
+    local opaqueOnFocusSubMenu = opacitySubMenu:getNew(opacitySubMenu)
+    opacitySubMenu:addSubMenu(opaqueOnFocusOption, opaqueOnFocusSubMenu)
     opaqueOnFocusSubMenu:addOption(getText("UI_chat_context_disable"), ISChat.instance, ISChat.onFocusOpaqueChange, false)
     opaqueOnFocusSubMenu:addOption(getText("UI_chat_context_enable"), ISChat.instance, ISChat.onFocusOpaqueChange, true)
     opaqueOnFocusSubMenu:setOptionChecked(opaqueOnFocusSubMenu.options[self.opaqueOnFocus and 2 or 1], true)
 
+    -- Chat Background Colors submenu
+    local chatColorsOption = chatOptionsSubMenu:addOption("Chat Background Colors", nil)
+    local chatColorsSubMenu = chatOptionsSubMenu:getNew(chatOptionsSubMenu)
+    chatOptionsSubMenu:addSubMenu(chatColorsOption, chatColorsSubMenu)
+    
+    chatColorsSubMenu:addOption("Set Background Color", self, function()
+        local modal = ISTextBox:new(
+                0, 0, 520, 180,
+                "Enter background color (RGB: 42,42,42 or Hex: #2A2A2A):",
+                "",
+                nil,
+                function(_, button)
+                    if button.internal == "OK" then
+                        local input = button.parent.entry:getText() or ""
+                        ISChat.applyBackgroundColor(input)
+                    end
+                end,
+                false
+        )
+        modal:initialise()
+        modal:addToUIManager()
+    end)
+    
+    chatColorsSubMenu:addOption("Set Title Bar Color", self, function()
+        local modal = ISTextBox:new(
+                0, 0, 520, 180,
+                "Enter title bar color (RGB: 20,20,20 or Hex: #141414):",
+                "",
+                nil,
+                function(_, button)
+                    if button.internal == "OK" then
+                        local input = button.parent.entry:getText() or ""
+                        ISChat.applyTitleBarColor(input)
+                    end
+                end,
+                false
+        )
+        modal:initialise()
+        modal:addToUIManager()
+    end)
+    
+    chatColorsSubMenu:addOption("Reset to Default Colors", self, function()
+        ISChat.resetBackgroundColors()
+    end)
+
+    -- ========================================
+    -- BUBBLES & INDICATORS (grouped submenu)
+    -- ========================================
+    local bubblesOption = context:addOption("Bubbles & Indicators", nil)
+    local bubblesSubMenu = context:getNew(context)
+    context:addSubMenu(bubblesOption, bubblesSubMenu)
+
+    -- Chat Bubbles toggle
+    local bubbleLabel = getText("UI_TICS_enable_chat_bubbles")
+    if self.showChatBubbles then
+        bubbleLabel = getText("UI_TICS_disable_chat_bubbles")
+    end
+    bubblesSubMenu:addOption(bubbleLabel, self, ISChat.onToggleBubbles)
+    
+    -- Typing Indicator toggle (in-chat "X is typing...")
+    local typingLabel = "Enable Typing Indicator"
+    if self.showTypingIndicator then
+        typingLabel = "Disable Typing Indicator"
+    end
+    bubblesSubMenu:addOption(typingLabel, self, ISChat.onToggleTypingIndicator)
+    
+    -- Typing Bubbles toggle (overhead dots)
+    local typingBubblesLabel = "Enable Typing Bubbles"
+    if self.showTypingBubbles then
+        typingBubblesLabel = "Disable Typing Bubbles"
+    end
+    bubblesSubMenu:addOption(typingBubblesLabel, self, ISChat.onToggleTypingBubbles)
+
+    -- Voice toggle
     local voiceOptionName = getText("UI_TICS_chat_enable_voices")
     if self.isVoiceEnabled then
         voiceOptionName = getText("UI_TICS_chat_disable_voices")
     end
-    context:addOption(voiceOptionName, ISChat.instance, ISChat.onToggleVoice)
+    bubblesSubMenu:addOption(voiceOptionName, ISChat.instance, ISChat.onToggleVoice)
 
+    -- Radio Icon toggle
     local radioIconOptionName = getText("UI_TICS_enable_radio_icon")
     if self.isRadioIconEnabled then
         radioIconOptionName = getText("UI_TICS_disable_radio_icon")
     end
-    context:addOption(radioIconOptionName, ISChat.instance, ISChat.onToggleRadioIcon)
+    bubblesSubMenu:addOption(radioIconOptionName, ISChat.instance, ISChat.onToggleRadioIcon)
 
+    -- Portrait toggle
     if TicsServerSettings and TicsServerSettings['options']['portrait'] ~= 1 then
         local portraitOptionName = getText("UI_TICS_enable_portrait")
         if self.isPortraitEnabled then
             portraitOptionName = getText("UI_TICS_disable_portrait")
         end
-        context:addOption(portraitOptionName, ISChat.instance, ISChat.onTogglePortrait)
+        bubblesSubMenu:addOption(portraitOptionName, ISChat.instance, ISChat.onTogglePortrait)
     end
 
-    -- cleaning character
+    -- ========================================
+    -- FOCUS MENU
+    -- ========================================
+    if FocusManager and FocusManager.IsEnabled() then
+        local focusOption = context:addOption(getText("UI_TICS_focus_menu"), nil)
+        local focusSubMenu = context:getNew(context)
+        context:addSubMenu(focusOption, focusSubMenu)
 
-    context:addOption(getText("UI_TICS_clean_character"), ISChat.instance, function()
+        -- Get nearby players
+        local nearbyPlayers = FocusManager.GetNearbyFocusablePlayers()
+
+        -- Focus On submenu
+        local hasFocusable = false
+        local focusOnOption = focusSubMenu:addOption(getText("UI_TICS_focus_on"), nil)
+        local focusOnSubMenu = focusSubMenu:getNew(focusSubMenu)
+        focusSubMenu:addSubMenu(focusOnOption, focusOnSubMenu)
+
+        for _, playerInfo in ipairs(nearbyPlayers) do
+            if not playerInfo.isFocused then
+                hasFocusable = true
+                local displayName = playerInfo.characterName .. " (" .. playerInfo.distance .. "m)"
+                local usernameToFocus = playerInfo.username  -- Capture in local variable for closure
+                focusOnSubMenu:addOption(displayName, nil, function()
+                    local success, message = FocusManager.FocusOn(usernameToFocus)
+                    if success then
+                        ISChat.sendInfoToCurrentTab(message)
+                    else
+                        ISChat.sendErrorToCurrentTab(message)
+                    end
+                end)
+            end
+        end
+
+        if not hasFocusable then
+            if #nearbyPlayers == 0 then
+                focusOnSubMenu:addOption(getText("UI_TICS_focus_no_nearby"), nil, nil)
+            else
+                focusOnSubMenu:addOption(getText("UI_TICS_focus_all_focused"), nil, nil)
+            end
+        end
+
+        -- Unfocus From submenu
+        local focusedPlayers = FocusManager.GetFocusedPlayers()
+        if #focusedPlayers > 0 then
+            local unfocusOption = focusSubMenu:addOption(getText("UI_TICS_unfocus_from"), nil)
+            local unfocusSubMenu = focusSubMenu:getNew(focusSubMenu)
+            focusSubMenu:addSubMenu(unfocusOption, unfocusSubMenu)
+
+            for _, username in ipairs(focusedPlayers) do
+                local usernameToUnfocus = username  -- Capture for closure
+                local charName = FocusManager.GetCharacterName(username)  -- Show character name
+                unfocusSubMenu:addOption(charName, nil, function()
+                    local success, message = FocusManager.UnfocusOn(usernameToUnfocus)
+                    if success then
+                        ISChat.sendInfoToCurrentTab(message)
+                    else
+                        ISChat.sendErrorToCurrentTab(message)
+                    end
+                end)
+            end
+
+            -- Unfocus All option
+            focusSubMenu:addOption(getText("UI_TICS_unfocus_all"), nil, function()
+                local success, message = FocusManager.UnfocusAll()
+                if success then
+                    ISChat.sendInfoToCurrentTab(message)
+                else
+                    ISChat.sendErrorToCurrentTab(message)
+                end
+            end)
+        end
+
+        -- Show current focus count
+        local focusCount = FocusManager.GetFocusCount()
+        if focusCount > 0 then
+            focusSubMenu:addOption(getText("UI_TICS_focus_count", focusCount), nil, nil)
+        end
+    end
+
+    -- ========================================
+    -- CHARACTER OPTIONS (grouped submenu)
+    -- ========================================
+    local characterOption = context:addOption("Character Options", nil)
+    local characterSubMenu = context:getNew(context)
+    context:addSubMenu(characterOption, characterSubMenu)
+
+    -- Clean Character
+    characterSubMenu:addOption(getText("UI_TICS_clean_character"), ISChat.instance, function()
         PandemUtilities.cleanCharacter()
         ISChat.sendInfoToCurrentTab("Your character has been cleaned!")
     end)
 
-    -- defining hair menu options for growing hair
+    -- Hair Options submenu
+    local hairOption = characterSubMenu:addOption("Hair Options", nil)
+    local hairSubMenu = characterSubMenu:getNew(characterSubMenu)
+    characterSubMenu:addSubMenu(hairOption, hairSubMenu)
 
-    local hairOption = context:addOption("Hair Options", nil)
-    local hairSubMenu = context:getNew(context)
-    context:addSubMenu(hairOption, hairSubMenu)
-
-    -- adding grow hair long
+    -- Grow Long Hair
     hairSubMenu:addOption("Grow Long Hair", nil, function()
         local playerObj = getPlayer()
 
-        -- Use Buffy’s logic: “Long2” if female, “Fabian” if male
+        -- Use Buffy's logic: "Long2" if female, "Fabian" if male
         if playerObj:isFemale() then
             ISCharacterScreen.onCutHair(playerObj, "Long2", 10)
         else
@@ -3408,7 +4069,7 @@ function ISChat:onGearButtonClick()
         playerObj:resetModel()
     end)
 
-    -- adding grow beard
+    -- Grow Beard
     hairSubMenu:addOption("Grow Beard", nil, function()
         local playerObj = getPlayer()
 
@@ -3419,7 +4080,7 @@ function ISChat:onGearButtonClick()
             return
         end
 
-        -- Trim/grow beard to “Long”
+        -- Trim/grow beard to "Long"
         ISCharacterScreen.onTrimBeard(playerObj, "Long")
 
         -- Refresh visuals
@@ -3428,9 +4089,31 @@ function ISChat:onGearButtonClick()
         playerObj:resetModel()
     end)
 
-    local injureOption = context:addOption("Add Injury", nil, nil)
-    local injureContext = context:getNew(context)
-    context:addSubMenu(injureOption, injureContext)
+    -- Set Hair Color
+    hairSubMenu:addOption("Set Hair Color (RGB)", self, function()
+        local modal = ISTextBox:new(
+                0, 0, 520, 180,
+                "Enter a hair color in R,G,B format (e.g. 128,128,255):",
+                "",
+                nil,
+                function(_, button)
+                    if button.internal == "OK" then
+                        local input = button.parent.entry:getText() or ""
+                        ISChat.applyRGBHairColor(input)
+                    elseif button.internal == "CANCEL" then
+                        return
+                    end
+                end,
+                false
+        )
+        modal:initialise()
+        modal:addToUIManager()
+    end)
+
+    -- Add Injury submenu
+    local injureOption = characterSubMenu:addOption("Add Injury", nil, nil)
+    local injureContext = characterSubMenu:getNew(characterSubMenu)
+    characterSubMenu:addSubMenu(injureOption, injureContext)
 
     -- Loop through body parts provided by our helper function
     for _, bodyPartStr in ipairs(TICS_GetBodyParts()) do
@@ -3453,37 +4136,6 @@ function ISChat:onGearButtonClick()
             print("TICS Warning: Could not get BodyPartType for string: " .. bodyPartStr .. " in context menu.")
         end
     end
-
-    local label = getText("UI_TICS_enable_chat_bubbles")
-    if self.showChatBubbles then
-        label = getText("UI_TICS_disable_chat_bubbles")
-    end
-    context:addOption(label, self, ISChat.onToggleBubbles)
-
-    local hairColorOption = context:addOption("Set Hair Color (RGB)", nil)
-    local hairColorSubMenu = context:getNew(context)
-    context:addSubMenu(hairColorOption, hairColorSubMenu)
-
-    hairColorSubMenu:addOption("Choose Hair Color", self, function()
-        -- Prompt the user with a text box
-        local modal = ISTextBox:new(
-                0, 0, 520, 180,
-                "Enter a hair color in R,G,B format (e.g. 128,128,255):",
-                "",
-                nil,
-                function(_, button)
-                    if button.internal == "OK" then
-                        local input = button.parent.entry:getText() or ""
-                        ISChat.applyRGBHairColor(input)
-                    elseif button.internal == "CANCEL" then
-                        return
-                    end
-                end,
-                false  -- Make sure this is false if you want OK/Cancel
-        )
-        modal:initialise()
-        modal:addToUIManager()
-    end)
 end
 
 
@@ -3495,6 +4147,44 @@ function ISChat.onToggleBubbles()
     -- Optional: Provide feedback to the user
     local status = ISChat.instance.showChatBubbles and "enabled" or "disabled"
     ISChat.sendInfoToCurrentTab("Chat bubbles " .. status .. ".")
+end
+
+function ISChat.onToggleTypingIndicator()
+    ISChat.instance.showTypingIndicator = not ISChat.instance.showTypingIndicator
+    ISChat.saveTypingIndicatorSetting()
+    local status = ISChat.instance.showTypingIndicator and "enabled" or "disabled"
+    ISChat.sendInfoToCurrentTab("Typing indicator " .. status .. ".")
+end
+
+function ISChat.saveTypingIndicatorSetting()
+    local ticsModData = ISChat.instance.ticsModData
+    if not ticsModData then
+        ticsModData = ModData.getOrCreate("tics")
+        ISChat.instance.ticsModData = ticsModData
+    end
+    ticsModData['showTypingIndicator'] = ISChat.instance.showTypingIndicator
+    ModData.add('tics', ticsModData)
+end
+
+function ISChat.onToggleTypingBubbles()
+    ISChat.instance.showTypingBubbles = not ISChat.instance.showTypingBubbles
+    -- Clear existing typing dots when disabled
+    if not ISChat.instance.showTypingBubbles then
+        ISChat.instance.typingDots = {}
+    end
+    ISChat.saveTypingBubblesSetting()
+    local status = ISChat.instance.showTypingBubbles and "enabled" or "disabled"
+    ISChat.sendInfoToCurrentTab("Typing bubbles " .. status .. ".")
+end
+
+function ISChat.saveTypingBubblesSetting()
+    local ticsModData = ISChat.instance.ticsModData
+    if not ticsModData then
+        ticsModData = ModData.getOrCreate("tics")
+        ISChat.instance.ticsModData = ticsModData
+    end
+    ticsModData['showTypingBubbles'] = ISChat.instance.showTypingBubbles
+    ModData.add('tics', ticsModData)
 end
 
 
@@ -3521,6 +4211,76 @@ function ISChat.onTogglePortrait()
     ISChat.instance.isPortraitEnabled = not ISChat.instance.isPortraitEnabled
     ISChat.instance.ticsModData['isPortraitEnabled'] = ISChat.instance.isRadioIconEnabled
     ModData.add('tics', ISChat.instance.ticsModData)
+end
+
+-- Parse color string (supports RGB: "255,255,255" or Hex: "#FFFFFF" or "FFFFFF")
+local function parseColorString(colorStr)
+    if not colorStr or colorStr == "" then
+        return nil
+    end
+    
+    -- Remove whitespace
+    colorStr = colorStr:gsub("%s+", "")
+    
+    -- Try hex format (#RRGGBB or RRGGBB)
+    local hex = colorStr:match("^#?([%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F][%da-fA-F])$")
+    if hex then
+        local r = tonumber(hex:sub(1, 2), 16)
+        local g = tonumber(hex:sub(3, 4), 16)
+        local b = tonumber(hex:sub(5, 6), 16)
+        if r and g and b then
+            return { r = r, g = g, b = b }
+        end
+    end
+    
+    -- Try RGB format (R,G,B)
+    local r, g, b = colorStr:match("^(%d+),(%d+),(%d+)$")
+    if r and g and b then
+        r, g, b = tonumber(r), tonumber(g), tonumber(b)
+        if r and g and b and r >= 0 and r <= 255 and g >= 0 and g <= 255 and b >= 0 and b <= 255 then
+            return { r = r, g = g, b = b }
+        end
+    end
+    
+    return nil
+end
+
+function ISChat.applyBackgroundColor(colorStr)
+    local color = parseColorString(colorStr)
+    if not color then
+        ISChat.sendErrorToCurrentTab("Invalid color format. Use RGB (42,42,42) or Hex (#2A2A2A)")
+        return
+    end
+    
+    ISChat.instance.customBackgroundColor = color
+    ISChat.instance.ticsModData['chatBackgroundColor'] = color
+    ModData.add('tics', ISChat.instance.ticsModData)
+    
+    ISChat.sendInfoToCurrentTab(string.format("Chat background color set to R:%d G:%d B:%d", color.r, color.g, color.b))
+end
+
+function ISChat.applyTitleBarColor(colorStr)
+    local color = parseColorString(colorStr)
+    if not color then
+        ISChat.sendErrorToCurrentTab("Invalid color format. Use RGB (20,20,20) or Hex (#141414)")
+        return
+    end
+    
+    ISChat.instance.customTitleBarColor = color
+    ISChat.instance.ticsModData['chatTitleBarColor'] = color
+    ModData.add('tics', ISChat.instance.ticsModData)
+    
+    ISChat.sendInfoToCurrentTab(string.format("Chat title bar color set to R:%d G:%d B:%d", color.r, color.g, color.b))
+end
+
+function ISChat.resetBackgroundColors()
+    ISChat.instance.customBackgroundColor = nil
+    ISChat.instance.customTitleBarColor = nil
+    ISChat.instance.ticsModData['chatBackgroundColor'] = nil
+    ISChat.instance.ticsModData['chatTitleBarColor'] = nil
+    ModData.add('tics', ISChat.instance.ticsModData)
+    
+    ISChat.sendInfoToCurrentTab("Chat background colors reset to default")
 end
 
 Events.OnChatWindowInit.Add(ISChat.initChat)
