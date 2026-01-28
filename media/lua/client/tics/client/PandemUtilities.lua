@@ -249,11 +249,11 @@ end
 function PandemUtilities.adminisland()
     local player = getPlayer()
     player:getEmitter():playSound("Teleport")
-    player:setX(10444)
-    player:setY(6082)
+    player:setX(1237)
+    player:setY(5332)
     player:setZ(0)
-    player:setLx(10444)
-    player:setLy(6082)
+    player:setLx(1237)
+    player:setLy(5332)
     player:setLz(0)
 end
 
@@ -324,35 +324,38 @@ end
 
 function PandemUtilities.automatedTipMessages()
     local player = getPlayer()
-    local tips = {"Knox County, a diverse and wide-ranging county... now under lock and key.",
-                  "Tune into 90.8 to hear your fellow survivors and the Automated Emergency Broadcast Signal!",
-                  "There are quite a few towns in the local area, but be wary, some of them harbor more danger than just regular zombies.",
+    local tips = {"Welcome to Emerson Cove! Enjoy the bright sun, warm beaches, and extreme income equality!",
+                  "Emerson Cove features a luxurious resort for all visitors to stay at. You're just going to be labeled a tourist forever once you do.",
+                  "Ready to finally hook that big catch? Emerson Cove sports TWO bait and tackle shops. Ignore the rumors about the blood feud between them.",
+                  "We live on a placid island of ignorance in the midst of black seas of infinity, and it was not meant that we should voyage far.",
+                  "Tune into 105.8 to hear your fellow survivors and the Automated Emergency Broadcast Signal!",
+                  "There are quite a few islands to explore in the region, but getting a ferry is harder these days...",
                   "Not sure if a faction is online? Want to start up a crew to go out exploring? Check out #looking-for-rp in the discord and send out a message!",
                   "Only you can prevent littering! Tin cans from eating and soda cans from drinking can be broken down into metal parts which can become scrap metal. Recycle Cans under Metalworking.",
-                  "Casings from your gun have been enhanced to go straight into space. This means about 50% of your casings to eject out onto the ground. Those are great savings!",
                   "Our #ic-map channel in discord shows all common knowledge faction base locations!",
                   "Guns handle a bit differently. Different than traditional Zomboid, try to think of real life tips and techniques to perform better.",
-                  "Remember, in these trying times, you can only look out for you and your fellow man.",
-                  "Rumors exist that if you're willing to sacrifice the mobility of a car, there exists a sewer system you can use to traverse the county...",
+                  "Some say that buying property on behalf of a corporation is suspect. We here at Anderson and Calloway Investments would like to remind you that corporations are people too.",
+                  "Get drunk and disorderly? Accidentally break several of the 'traffic' laws? Stop by Emerson Cove's only law firm and book a counsel with Silas Everett today!",
+                  "While shipping exotic pets domestically can be illegal, buying a new, cute, and wonderful animal friend at Whiskers and Waves isn't!",
+                  "Emerson Cove's take on fish and chips is actually chips and cafe, now exclusively found at Sou'western! Note: Seahorse Coffee does NOT include the secret menu.",
+                  "Ever worried your smile just isn't good enough? Well worry no longer, drop by Mick's Dentistry for cleanings, surgeries, and the fact he's the island's only dentist!",
+                  "Worried about the island's lower-than-average literacy rate? It doesn't matter. The library only holds words and letters. No knowledge to help the horrors of this great Undoing.",
+                  "Can it be possible that this planet has actually spawned such things; that human eyes have truly seen, as objective flesh, what man has hitherto known only in febrile phantasy and tenuous legend?",
+                  "There is heroism and brute warfare on the ocean floor, unnoticed by land-dwellers. There are gods and catastrophes.",
+                  "Scared? Anxious? Paranoid? Grab a drink at the local bar, the Pearl, and repress those feelings!",
+                  "Ever wonder if an island could have sewers? Why would it? The ocean is right there!",
                   "Not sure where to find the dice panel? Trying to look how to roll? Take a look at the website -> Making your Survivor! The website has great information, make sure to review it!",
                   "Have too much unusable metal? Wish you had more nails? Check the crafting recipe, more nails are simply inches away!",
                   "Wish you could invite friends and allies over but they have a safehouse? No worries, you're allowed multiple safehouses! Make sure to own a safehouse before being invited to another!",
-                  "Life is fragile. You can only survive 2 Severe Wounds. The third is fatal, be careful out there.",
+                  "Did you know: technically all US laws apply here. But the mainland is so far away, who's gonna know?",
                   "Not sure on our infection rules? Check out our website -> Dice -> Infection for more information!",
                   "Not all weapons can hit multiple zombies, check out the discord post on multi-hit limits!",
-                  "We value feedback! Look in Server Suggestions -> Daily Flash Polls for any active polls that help give insight to shape the server's future!",
-                  "Sometimes, events happen and there's audio associated. /stopsound stops this sound! Be careful, it also stops boombox music from playing for everyone...",
+                  "Sometimes, events happen and there's audio associated. /stopsound stops this sound!",
                   "Want to not hear the boombox? Head to your settings -> Audio -> Ambient Volume this controls all sorts of sounds!",
-                  "The rumors about Mayor McPhebes having a twin brother named Mayor McCarthy is hearsay.",
+                  "The rumors about former Mayors McCarthy and Phebes disappearing are hearsay. They're just on vacation somewhere more dry.",
                   "Want to make connections? Trying to trade? Utilize the #looking-for-rp channel and the pingable roles to get something going!",
-                  "Traits can be gained and lost, such as Smoker! It's all thanks to Dynamic Traits-- make sure to experiment and see what you get!",
-                  "Our occupations reflect general archetypes. If you're unsure about them, make sure to check the 'Creating your Character' section on the pandemonium website.",
-                  "The Infection is spreading and possibly changing everyone here in Knox county. How do you know that you haven't been affected?",
                   "Need help? Make sure to open a ticket in the discord! Want to help? Check announcements, we're always looking for staff to help run things smoothly!",
-                  "There are in-game radio stations that play music, broadcasts, and in-universe announcements. They're at 94, 94.2, and 94.4 MHz respectively!",
-                  "There are rumors of Zones within Knox that only the Brave or Foolhardy enter. Many aspects and answers of the virus lay within...",
-                  "Want to send a message across the county? Need an advertisement for a public event? Seek out one of the two player-owned radio POIs!",
-                  "Confused on some chat commands? Not sure what our chat mod does? Check out the guide in #pande-help!"
+                  "Confused on some chat commands? Not sure what our chat mod does? Check out the guide in #revenant-help!"
     }
     if ZombRand(1,20) > 10 then --50/50ish to fire everyhours
         ISChat.sendInfoToCurrentTab("[Tip] "..tips[ZombRand(1,math.max(1,#tips+1))])

@@ -30,98 +30,70 @@ function OverheadBioRenderer.RenderBios()
     local zoom = getCore():getZoom(0)
     local tm = getTextManager()
 
+    -- Cache my admin status once per frame (optimization)
+    local myAccess = player:getAccessLevel()
+    local canSeeInvis = (myAccess == "Admin" or myAccess == "Moderator" or myAccess == "Overseer" or myAccess == "GM")
+
     -- Mark all current elements as not seen initially for this frame
-    -- We only track *potential* elements to avoid recalculating width constantly
-    -- The actual drawing depends solely on the hover check this frame
+    -- (Used for cache tracking if you ever wanted to debug, but harmless to keep)
     for id, ele in pairs(OverheadBioRenderer.OverheadElements) do
         ele.seen = false
     end
 
-    -- Get current mouse position and convert to world coordinates at player's Z
     local mouseX = getMouseX()
     local mouseY = getMouseY()
     local mouseWorldX = screenToIsoX(0, mouseX, mouseY, player:getZ())
     local mouseWorldY = screenToIsoY(0, mouseX, mouseY, player:getZ())
-    local worldZ = player:getZ() -- The Z level we are checking against
+    local worldZ = player:getZ()
 
     local players = getOnlinePlayers()
-    local hoveredPlayerID = nil -- Keep track if we actually hovered over someone
 
     for i = 0, players:size() - 1 do
         local otherPlayer = players:get(i)
-        local key = otherPlayer:getUsername()
 
-        -- Calculate distance from MOUSE cursor's world position to the other player
-        local distSq = OverheadBioRenderer.GetDistanceSq(mouseWorldX, mouseWorldY, otherPlayer)
+        -- Invisibility Check
+        local skip = false
+        if otherPlayer:isInvisible() and not canSeeInvis then
+            skip = true
+        end
 
-        -- *** HOVER CHECK ***
-        -- Check if mouse is close enough to this player AND they are on the same Z level
-        -- Optional: Add WRC.CanSeePlayer check if you have access to it and want line-of-sight
-        if worldZ == otherPlayer:getZ() and distSq <= hoverMaxDistSq --[[and WRC and WRC.CanSeePlayer and WRC.CanSeePlayer(otherPlayer, true, 20)]] then
-            local bio = BioMeta.Get(otherPlayer:getUsername())
+        if not skip then
+            local key = otherPlayer:getUsername()
+            -- Calculate distance from MOUSE cursor to player
+            local distSq = OverheadBioRenderer.GetDistanceSq(mouseWorldX, mouseWorldY, otherPlayer)
 
-            if bio then -- Only render if they have a bio set and are hovered
-                hoveredPlayerID = onlineID -- Mark this player as the one being hovered
+            -- Hover Check
+            if worldZ == otherPlayer:getZ() and distSq <= hoverMaxDistSq then
+                local bio = BioMeta.Get(otherPlayer)
 
-                local px = otherPlayer:getX()
-                local py = otherPlayer:getY()
-                local pz = otherPlayer:getZ()
+                if bio then
+                    local px = otherPlayer:getX()
+                    local py = otherPlayer:getY()
+                    local pz = otherPlayer:getZ()
 
-                -- Calculate screen position (base above head)
-                local sx = isoToScreenX(0, px, py, pz)
-                local sy = isoToScreenY(0, px, py, pz)
+                    local sx = isoToScreenX(0, px, py, pz)
+                    local sy = isoToScreenY(0, px, py, pz)
+                    local yOffset = (nameOffsetY / zoom)
 
-                -- Adjust Y position to be above the name
-                local yOffset = (nameOffsetY / zoom)
-                -- Optional fine-tuning (like WRC) if needed:
-                -- yOffset = yOffset - (3*zoom)
+                    local currentElement = OverheadBioRenderer.OverheadElements[key]
+                    local textWidth
 
-                local currentElement = OverheadBioRenderer.OverheadElements[key]
-                local textWidth
+                    -- Recalculate width only if bio changed or new player
+                    if not currentElement or currentElement.bioText ~= bio then
+                        textWidth = tm:MeasureStringX(bioFont, bio)
+                        OverheadBioRenderer.OverheadElements[key] = { seen = true, textWidth = textWidth, bioText = bio }
+                    else
+                        textWidth = currentElement.textWidth
+                        currentElement.seen = true
+                    end
 
-                -- Calculate text width if needed (only if text changed or first time)
-                if not currentElement or currentElement.bioText ~= bio then
-                    textWidth = tm:MeasureStringX(bioFont, bio)
-                    -- Update or create the cache entry
-                    OverheadBioRenderer.OverheadElements[key] = { seen = true,
-                                                                  textWidth = textWidth,
-                                                                  bioText   = bio }
-                else
-                    textWidth = currentElement.textWidth -- Use cached width
-                    currentElement.seen = true -- Mark as seen *in the cache* for this frame
+                    -- Draw immediate (no cleanup needed)
+                    tm:DrawString(bioFont, sx - (textWidth / 2), sy - yOffset, bio, bioColor.r, bioColor.g, bioColor.b, bioColor.a)
+                    break
                 end
-
-                -- Draw the text - Centered horizontally
-                tm:DrawString(bioFont, sx - (textWidth / 2), sy - yOffset, bio, bioColor.r, bioColor.g, bioColor.b, bioColor.a)
-
-                -- Since we found a hovered player, we can potentially break early
-                -- if we only ever want to show ONE bio at a time (the topmost one).
-                -- If multiple players could be under the cursor radius, remove the break.
-                break
             end
         end
     end
-
-    -- Clean up cache entries for players who weren't hovered *this frame*
-    -- Note: This cleanup is mostly for the cache. Since we aren't using ISUIElements,
-    -- nothing needs to be explicitly removed from a UI manager. The text simply
-    -- won't be drawn next frame if the hover condition isn't met.
-    local idsToRemove = {}
-    for id, ele in pairs(OverheadBioRenderer.OverheadElements) do
-        -- If an element was cached but *not* seen (hovered) this frame,
-        -- we can potentially remove it from the cache to save memory,
-        -- though it's not strictly necessary unless the cache grows huge.
-        -- A simpler approach is to just let the cache keep entries.
-        -- Let's keep it simple: We don't *need* to remove cache entries here
-        -- unless BioManager.GetBio(id) becomes nil, which we don't check here.
-        -- The 'seen' flag was primarily used by WRC to remove UIElements.
-        -- We'll leave the cache as is for simplicity. If a player logs off,
-        -- they won't be in getOnlinePlayers() anymore.
-    end
-    -- If you *did* want to prune the cache:
-    -- for _, id in ipairs(idsToRemove) do
-    --     OverheadBioRenderer.OverheadElements[id] = nil
-    -- end
 end
 
 if not OverheadBioRenderer._hooked then
